@@ -24,7 +24,7 @@ def tz_info_from_aware_dt(aware_dt):
     minutes = (abs_total % 3600) // 60
     return f"UTC{sign}{hours:02d}:{minutes:02d}"
 
-# Improved detection function
+# Improved detection function (no hardcoded abbrev map; final fallback Asia/Kolkata)
 def detect_local_timezone_candidate(timezones):
     # 1) env override
     env_tz = os.environ.get("DEFAULT_SOURCE_TZ")
@@ -64,31 +64,12 @@ def detect_local_timezone_candidate(timezones):
                         pass
             # some systems expose full name via tzname()
             tzname = local_aware.tzname()
-            if tzname:
-                # direct exact match (rare)
-                if tzname in timezones:
-                    return tzname
+            if tzname and tzname in timezones:
+                return tzname
     except Exception:
         pass
 
-    # 4) abbreviation mapping (common ambiguous cases -> preferred IANA)
-    abbrev_map = {
-        "IST": "Asia/Kolkata",  # India Standard Time (ambiguous: also Israel/Sri Lanka historically)
-        "CST": "America/Chicago",
-        "EST": "America/New_York",
-        "PST": "America/Los_Angeles",
-        # add more if you need them
-    }
-    try:
-        local_abbr = datetime.now().astimezone().tzname()
-        if local_abbr and local_abbr in abbrev_map:
-            cand = abbrev_map[local_abbr]
-            if cand in timezones:
-                return cand
-    except Exception:
-        pass
-
-    # 5) match by current UTC offset: prefer zones that include 'Kolkata' or 'India'
+    # 4) match by current UTC offset: prefer zones that include 'Kolkata' or 'India'
     try:
         local_offset = datetime.now().astimezone().utcoffset()
         if local_offset is not None:
@@ -102,10 +83,9 @@ def detect_local_timezone_candidate(timezones):
                         matches.append(tz)
                 except Exception:
                     continue
-            # prefer India/Kolkata if present
-            for prefer in ("Asia/Kolkata",):
-                if prefer in matches:
-                    return prefer
+            # prefer Asia/Kolkata if present
+            if "Asia/Kolkata" in matches:
+                return "Asia/Kolkata"
             # prefer any with 'India' or 'Kolkata' in name
             for m in matches:
                 if "Kolkata" in m or "India" in m:
@@ -116,10 +96,12 @@ def detect_local_timezone_candidate(timezones):
     except Exception:
         pass
 
-    # final fallback
-    return "UTC"
+    # final fallback: India (Asia/Kolkata)
+    return "Asia/Kolkata"
 
 timezones = get_timezones()
+
+# prefer env var if you set it in Streamlit Cloud; otherwise try detection, final fallback is Asia/Kolkata
 default_source_tz = detect_local_timezone_candidate(timezones)
 
 # Sidebar navigation
