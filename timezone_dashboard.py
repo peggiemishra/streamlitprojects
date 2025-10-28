@@ -148,7 +148,7 @@ def make_aware_from_naive(naive_dt, tzname):
         return aware
 
 # UI start
-st.title("Dynamic Timezone Converter — v3")
+st.title("Dynamic Timezone Converter")
 
 timezones = get_timezones()
 offset_map = build_offset_map(timezones)
