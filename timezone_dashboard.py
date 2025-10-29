@@ -1,8 +1,9 @@
 # timezone_dashboard_fixed.py
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone as _timezone
 import pytz
 import os
+import pandas as pd  # <- for CSV export
 
 st.set_page_config(page_title="Dynamic Timezone Converter", layout="wide")
 
@@ -181,7 +182,8 @@ with st.expander("Clock Settings", expanded=True):
             sign = "+" if sec >= 0 else "-"
             return f"{tz} (UTC{sign}{abs(h):02d}:{m:02d})"
 
-        target_tz_names = st.multiselect("Other Clocks", [tz for tz in timezones if tz != source_tz_name], format_func=lambda x: label_for(x))
+        available_targets = [tz for tz in timezones if tz != source_tz_name]
+        target_tz_names = st.multiselect("Other Clocks", available_targets, format_func=lambda x: label_for(x))
 
 # choose source tzobj
 if USE_ZONEINFO:
@@ -227,8 +229,49 @@ if mode == "Current Time Conversion":
     if not target_tz_names:
         right_col.info("Select one or more Other Clocks in the 'Clock Settings' above.")
     else:
+        # build CSV-able data while rendering (include home clock as first row)
+        rows = []
+
+        # home clock row
+        rows.append({
+            "Label": "Home Clock",
+            "Timezone": source_tz_name,
+            "Abbrev": source_now.tzname(),
+            "Local Time": format_dt(source_now),
+            "Weekday": source_now.strftime('%A'),
+            "ISO": source_now.isoformat(),
+            "Epoch": int(source_now.timestamp()),
+            "Offset": tz_info_from_aware_dt(source_now),
+        })
+
         for tgt_name in target_tz_names:
+            # render card
             render_card(right_col, f"{tgt_name}", source_now, tgt_name)
+            # collect row
+            if USE_ZONEINFO:
+                dt_in_tgt = source_now.astimezone(ZoneInfo(tgt_name))
+            else:
+                dt_in_tgt = source_now.astimezone(pytz.timezone(tgt_name))
+            rows.append({
+                "Label": "Target Clock",
+                "Timezone": tgt_name,
+                "Abbrev": dt_in_tgt.tzname(),
+                "Local Time": format_dt(dt_in_tgt),
+                "Weekday": dt_in_tgt.strftime('%A'),
+                "ISO": dt_in_tgt.isoformat(),
+                "Epoch": int(dt_in_tgt.timestamp()),
+                "Offset": tz_info_from_aware_dt(dt_in_tgt),
+            })
+
+        if rows:
+            df = pd.DataFrame(rows)
+            csv_data = df.to_csv(index=False)
+            right_col.download_button(
+                label="⬇️ Download CSV (All Clocks)",
+                data=csv_data,
+                file_name="all_clocks_current_conversion.csv",
+                mime="text/csv",
+            )
 
 else:
     st.subheader("🧭 Manual Time Conversion")
@@ -300,8 +343,47 @@ else:
     if not target_tz_names:
         right_col.info("Select one or more Other Clocks in the 'Clock Settings' above.")
     else:
+        # collect rows for CSV while rendering (include home clock first)
+        rows = []
+
+        # home clock row
+        rows.append({
+            "Label": "Home Clock",
+            "Timezone": source_tz_name,
+            "Abbrev": localized_source_dt.tzname(),
+            "Local Time": format_dt(localized_source_dt),
+            "Weekday": localized_source_dt.strftime('%A'),
+            "ISO": localized_source_dt.isoformat(),
+            "Epoch": int(localized_source_dt.timestamp()),
+            "Offset": tz_info_from_aware_dt(localized_source_dt),
+        })
+
         for tgt_name in target_tz_names:
             render_card(right_col, f"{tgt_name} (converted)", localized_source_dt, tgt_name)
+            if USE_ZONEINFO:
+                dt_in_tgt = localized_source_dt.astimezone(ZoneInfo(tgt_name))
+            else:
+                dt_in_tgt = localized_source_dt.astimezone(pytz.timezone(tgt_name))
+            rows.append({
+                "Label": "Target Clock",
+                "Timezone": tgt_name,
+                "Abbrev": dt_in_tgt.tzname(),
+                "Local Time": format_dt(dt_in_tgt),
+                "Weekday": dt_in_tgt.strftime('%A'),
+                "ISO": dt_in_tgt.isoformat(),
+                "Epoch": int(dt_in_tgt.timestamp()),
+                "Offset": tz_info_from_aware_dt(dt_in_tgt),
+            })
+
+        if rows:
+            df = pd.DataFrame(rows)
+            csv_data = df.to_csv(index=False)
+            right_col.download_button(
+                label="⬇️ Download CSV (All Clocks)",
+                data=csv_data,
+                file_name="all_clocks_manual_conversion.csv",
+                mime="text/csv",
+            )
 
 st.markdown("---")
-st.caption("Tip: abbreviations (PST/IST/CST) are shown for the chosen date — DST-aware, so they'll switch (e.g. PST ↔ PDT) when applicable.")
+st.caption("Tip: CSV includes Home Clock + Target Clocks, with ISO & epoch columns for easy import.")
