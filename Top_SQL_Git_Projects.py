@@ -10,18 +10,17 @@ from typing import Optional
 st.set_page_config(page_title="Top SQL Repos", layout="wide")
 
 # ------------------------------------------------------
-# CUSTOM CSS FOR HEADER + TILES + COLORS
+# CUSTOM CSS FOR BLUE BACKGROUND + TILES
 # ------------------------------------------------------
 st.markdown("""
 <style>
 
-    /* Force the whole app background to deep blue */
+    /* Force entire background blue */
     .main {
-        background-color: #0A3D91 !important;  /* Strong blue */
+        background-color: #0A3D91 !important;
         color: white !important;
     }
 
-    /* Override Streamlit dark mode background for everything */
     [data-testid="stAppViewContainer"] {
         background-color: #0A3D91 !important;
     }
@@ -29,7 +28,7 @@ st.markdown("""
         background-color: #0A3D91 !important;
     }
 
-    /* Centered title */
+    /* Title centered */
     h1 {
         text-align: center !important;
         color: white !important;
@@ -51,7 +50,7 @@ st.markdown("""
         border-radius: 12px;
         padding: 18px;
         margin-bottom: 25px;
-        background-color: white;          /* tiles stay white */
+        background-color: white;
         color: black !important;
         transition: all 0.2s ease-in-out;
     }
@@ -63,9 +62,7 @@ st.markdown("""
     }
 
     /* Tile internal text */
-    .repo-tile p,
-    .repo-tile div,
-    .repo-tile span {
+    .repo-tile p, .repo-tile div, .repo-tile span {
         color: black !important;
     }
 
@@ -78,6 +75,13 @@ st.markdown("""
     }
     .repo-tile a:hover {
         text-decoration: underline;
+    }
+
+    /* Make the page content centered and not too wide */
+    .block-container {
+        max-width: 1200px;
+        margin-left: auto;
+        margin-right: auto;
     }
 
 </style>
@@ -97,6 +101,9 @@ st.markdown(
 # ------------------------------------------------------
 GITHUB_SEARCH_URL = "https://api.github.com/search/repositories"
 
+# Prefer secret from Streamlit Cloud; safe get() so local runs don't crash
+secret_token: Optional[str] = st.secrets.get("GITHUB_TOKEN")
+
 def gh_headers(token: Optional[str]):
     hdr = {"Accept": "application/vnd.github.v3+json"}
     if token:
@@ -104,7 +111,7 @@ def gh_headers(token: Optional[str]):
     return hdr
 
 @st.cache_data(ttl=300)
-def fetch_top_sql_repos(per_page: int = 20, token: Optional[str] = None):
+def fetch_top_sql_repos(per_page: int = 30, token: Optional[str] = None):
     params = {
         "q": "language:SQL",
         "sort": "stars",
@@ -120,14 +127,32 @@ def fetch_top_sql_repos(per_page: int = 20, token: Optional[str] = None):
 # SIDEBAR
 # ------------------------------------------------------
 with st.sidebar:
-    token = st.text_input("GitHub token (optional)", type="password")
-    per_page = st.selectbox("Number of repos", [10, 20, 30, 50], index=1)
+    # If you want a local fallback textbox for testing, uncomment below:
+    # local_token_input = st.text_input("GitHub token (optional, local only)", type="password")
+    per_page = st.selectbox("Number of repos", [10, 20, 30, 50], index=2)  # default 30
     st.caption("This app only displays repo link, stars, and forks — clean and minimal.")
+    # Show whether we are using a secret token
+    if secret_token:
+        st.success("Using GITHUB_TOKEN from Streamlit secrets")
+    else:
+        st.info("No GITHUB_TOKEN found in Streamlit secrets (requests will be unauthenticated).")
+
+    # Show rate limit (best-effort)
+    try:
+        rate_resp = requests.get("https://api.github.com/rate_limit", headers=gh_headers(secret_token), timeout=7)
+        if rate_resp.ok:
+            rate = rate_resp.json().get("rate", {})
+            remaining = rate.get("remaining")
+            limit = rate.get("limit")
+            st.write(f"API rate limit: {remaining}/{limit} remaining")
+    except Exception:
+        # silently ignore rate-limit errors
+        pass
 
 # ------------------------------------------------------
 # FETCH RESULTS
 # ------------------------------------------------------
-items = fetch_top_sql_repos(per_page=per_page, token=token)
+items = fetch_top_sql_repos(per_page=per_page, token=secret_token)
 
 # ------------------------------------------------------
 # DISPLAY REPO CARDS IN A GRID
@@ -137,22 +162,21 @@ rows = (len(items) + cols_per_row - 1) // cols_per_row
 
 for r in range(rows):
     cols = st.columns(cols_per_row)
-
     for c in range(cols_per_row):
         idx = r * cols_per_row + c
         if idx >= len(items):
             break
 
         repo = items[idx]
-        name = repo["full_name"]
-        html_url = repo["html_url"]
-        stars = repo["stargazers_count"]
-        forks = repo["forks_count"]
+        name = repo.get("full_name", "")
+        html_url = repo.get("html_url", "#")
+        stars = repo.get("stargazers_count", 0)
+        forks = repo.get("forks_count", 0)
 
         with cols[c]:
             tile_html = f"""
             <div class="repo-tile">
-                <h3><a href="{html_url}" target="_blank">{name}</a></h3>
+                <h3><a href="{html_url}" target="_blank" rel="noopener">{name}</a></h3>
                 <div style="display:flex; gap:40px; margin-top:15px;">
                     <div><strong>⭐ Stars</strong><br>{stars:,}</div>
                     <div><strong>🍴 Forks</strong><br>{forks:,}</div>
