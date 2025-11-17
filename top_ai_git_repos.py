@@ -1,12 +1,18 @@
 # ai_top_repos.py
-
 import streamlit as st
 import requests
 from typing import Optional
 
+# ------------------------------------------------------
+# PAGE CONFIG
+# ------------------------------------------------------
 st.set_page_config(page_title="Top AI Repos", layout="wide")
 
-st.markdown("""
+# ------------------------------------------------------
+# CSS
+# ------------------------------------------------------
+st.markdown(
+    """
 <style>
     .main { background-color: #0A3D91 !important; color: white !important; }
     [data-testid="stAppViewContainer"]{background-color:#0A3D91!important;}
@@ -20,19 +26,25 @@ st.markdown("""
     .repo-tile a:hover { text-decoration:underline; }
     .block-container { max-width: 1200px; margin-left:auto; margin-right:auto; }
 </style>
-""", unsafe_allow_html=True)
-
-st.markdown("<h1>Top Curated AI Repos</h1>", unsafe_allow_html=True)
-st.markdown(
-    '<div class="subtitle">Trending repositories for AI, Machine Learning, and Deep Learning.</div>',
-    unsafe_allow_html=True
+""",
+    unsafe_allow_html=True,
 )
 
-# ----------------------------
-# GitHub API
-# ----------------------------
+# ------------------------------------------------------
+# HEADER
+# ------------------------------------------------------
+st.markdown("<h1>Top Curated AI Repos</h1>", unsafe_allow_html=True)
+st.markdown(
+    '<div class="subtitle">Trending repositories for AI, Machine Learning, and Deep Learning (topic-based).</div>',
+    unsafe_allow_html=True,
+)
+
+# ------------------------------------------------------
+# GITHUB API HELPERS
+# ------------------------------------------------------
 GITHUB_SEARCH_URL = "https://api.github.com/search/repositories"
 
+# safe read from secrets (works on Streamlit Cloud); returns None if missing
 secret_token: Optional[str] = st.secrets.get("GITHUB_TOKEN")
 
 def gh_headers(token: Optional[str]):
@@ -43,48 +55,89 @@ def gh_headers(token: Optional[str]):
 
 @st.cache_data(ttl=300)
 def fetch_ai_repos(per_page: int = 30, token: Optional[str] = None):
-    # Pure topic-based AI search
-    q = "topic:ai OR topic:artificial-intelligence OR topic:machine-learning OR topic:deep-learning"
+    """
+    Fetch topic-based AI repos. Returns list of repo dicts or [] on error.
+    Uses an API-compatible topic query (space-separated topic: qualifiers).
+    """
+    # NOTE: API does not accept OR between topic: qualifiers; use space-separated qualifiers.
+    q = "topic:ai topic:artificial-intelligence topic:machine-learning topic:deep-learning"
     params = {
         "q": q,
         "sort": "stars",
         "order": "desc",
         "per_page": per_page,
-        "page": 1
+        "page": 1,
     }
-    resp = requests.get(GITHUB_SEARCH_URL, params=params, headers=gh_headers(token), timeout=15)
-    resp.raise_for_status()
-    return resp.json().get("items", [])
 
-# ----------------------------
-# Sidebar
-# ----------------------------
+    try:
+        resp = requests.get(GITHUB_SEARCH_URL, params=params, headers=gh_headers(token), timeout=15)
+    except requests.RequestException as e:
+        # Network-level failure
+        st.error("Network error while contacting GitHub API.")
+        # Emit debug to app logs
+        st.exception(e)
+        return []
+
+    # Handle API-level errors gracefully
+    if not resp.ok:
+        # attempt to parse GitHub's message
+        try:
+            body = resp.json()
+            message = body.get("message", str(body))
+        except Exception:
+            message = resp.text or "No details provided by GitHub."
+
+        st.error(f"GitHub API error {resp.status_code}: {message}")
+        # Log details for debugging (visible in Streamlit logs)
+        st.exception(Exception(f"GitHub search failed: {resp.status_code} - {message}"))
+        return []
+
+    # parse JSON safely
+    try:
+        items = resp.json().get("items", [])
+    except Exception as e:
+        st.error("Failed to parse GitHub response.")
+        st.exception(e)
+        return []
+
+    return items
+
+# ------------------------------------------------------
+# SIDEBAR (controls + status)
+# ------------------------------------------------------
 with st.sidebar:
-    per_page = st.selectbox("Number of repos", [10, 20, 30, 50], index=2)
-
+    per_page = st.selectbox("Number of repos", [10, 20, 30, 50], index=2)  # default 30
     st.caption("Showing repo link, stars, and forks only.")
 
     if secret_token:
         st.success("Using GITHUB_TOKEN from Streamlit secrets")
     else:
-        st.info("No GITHUB_TOKEN found — using anonymous API calls.")
+        st.info("No GITHUB_TOKEN found — requests are anonymous and may be rate-limited.")
 
+    # Attempt to show rate limit info
     try:
-        rate_resp = requests.get("https://api.github.com/rate_limit", headers=gh_headers(secret_token), timeout=7)
-        if rate_resp.ok:
-            rate = rate_resp.json().get("rate", {})
+        rl = requests.get("https://api.github.com/rate_limit", headers=gh_headers(secret_token), timeout=7)
+        if rl.ok:
+            rate = rl.json().get("rate", {})
             st.write(f"API rate limit: {rate.get('remaining')}/{rate.get('limit')} remaining")
+        else:
+            st.write("Rate limit info not available.")
     except Exception:
+        # quiet fail
         pass
 
-# ----------------------------
-# Fetch repos
-# ----------------------------
+# ------------------------------------------------------
+# FETCH REPOS (safe)
+# ------------------------------------------------------
 items = fetch_ai_repos(per_page=per_page, token=secret_token)
 
-# ----------------------------
-# Display grid of cards
-# ----------------------------
+if not items:
+    st.info("No repositories to display. If you expected results, check your GITHUB_TOKEN in Streamlit Secrets or view app logs.")
+    st.stop()
+
+# ------------------------------------------------------
+# RENDER GRID
+# ------------------------------------------------------
 cols_per_row = 2
 rows = (len(items) + cols_per_row - 1) // cols_per_row
 
